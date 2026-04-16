@@ -1,0 +1,366 @@
+/**
+ * 📸 Image URL Generator for Google Apps Script
+ * 
+ * Descripción: Script para generar URLs en formato lh3.googleusercontent.com
+ * a partir de imágenes en carpetas de Google Drive. Ideal para alimentar
+ * bots, sistemas de documentación o galerías de imágenes.
+ * 
+ * Autor: Matias Rodriguez (@MatiasRodriguez4 / @MatiasRunamatic)
+ * Licencia: MIT
+ * Repositorio: https://github.com/MatiasRodriguez4/-Image-URL-Generator-for-Google-Apps-Script/tree/main
+ * 
+ * Instrucciones:
+ * 1. Crear un nuevo Google Sheets
+ * 2. Extensiones → Apps Script
+ * 3. Pegar este código
+ * 4. Configurar ID_CARPETA_IMAGENES con el ID de tu carpeta
+ * 5. Ejecutar procesarTodasLasImagenes()
+ */
+
+// ============================================================
+// CONFIGURACIÓN - CAMBIAR SEGÚN NECESIDADES
+// ============================================================
+
+/** ID de la carpeta de Google Drive donde están las imágenes */
+var ID_CARPETA_IMAGENES = "TU_ID_DE_CARPETA_AQUI";
+
+/** Nombre de la hoja donde se guardará el catálogo */
+var SHEET_NAME = "Catalogo Imagenes";
+
+/** Tamaño de las imágenes (s500, s1000, s1600, s2200) */
+var TAMANIO_IMG = "s1600";
+
+/** Intervalo de procesamiento automático (en horas, 0 = desactivado) */
+var INTERVALO_HORAS = 6;
+
+/** Formatos de imagen permitidos */
+var EXTENSIONES_PERMITIDAS = ["jpg", "jpeg", "png", "webp", "gif", "bmp", "svg"];
+
+// ============================================================
+// FUNCIÓN PRINCIPAL - Procesa todas las imágenes de la carpeta
+// ============================================================
+
+function procesarTodasLasImagenes() {
+  try {
+    console.log("🚀 Iniciando procesamiento de imágenes...");
+    
+    var carpetaPrincipal = DriveApp.getFolderById(ID_CARPETA_IMAGENES);
+    var catalogo = [];
+    
+    // Recorrer todas las subcarpetas recursivamente
+    recorrerCarpetaRecursivamente(carpetaPrincipal, "", catalogo);
+    
+    console.log(`📸 Total imágenes encontradas: ${catalogo.length}`);
+    
+    // Mostrar estructura encontrada
+    mostrarEstructura(catalogo);
+    
+    // Actualizar hoja de cálculo
+    actualizarHojaCalculo(catalogo);
+    
+    // Opcional: enviar a un webhook o API
+    if (catalogo.length > 0 && typeof enviarAWebhook === 'function') {
+      var textoCatalogo = convertirCatalogoATexto(catalogo);
+      enviarAWebhook(textoCatalogo);
+    }
+    
+    console.log("✅ Procesamiento completado");
+    
+  } catch (error) {
+    console.error("❌ Error: " + error.message);
+  }
+}
+
+// ============================================================
+// FUNCIÓN RECURSIVA - Recorre carpetas y subcarpetas
+// ============================================================
+
+function recorrerCarpetaRecursivamente(carpeta, rutaActual, catalogo) {
+  var archivos = carpeta.getFiles();
+  var subcarpetas = carpeta.getFolders();
+  var nombreCarpeta = carpeta.getName();
+  var rutaCompleta = rutaActual ? rutaActual + " / " + nombreCarpeta : nombreCarpeta;
+  
+  console.log(`📁 Procesando: ${rutaCompleta}`);
+  
+  // Procesar archivos de la carpeta actual
+  while (archivos.hasNext()) {
+    var archivo = archivos.next();
+    var nombreOriginal = archivo.getName();
+    var extension = nombreOriginal.split('.').pop().toLowerCase();
+    
+    if (EXTENSIONES_PERMITIDAS.indexOf(extension) === -1) continue;
+    
+    var id = archivo.getId();
+    var nombreSinExtension = nombreOriginal.replace(/\.[^\.]+$/, "");
+    var url = `https://lh3.googleusercontent.com/d/${id}=${TAMANIO_IMG}`;
+    
+    catalogo.push({
+      ruta: rutaCompleta,
+      nombre: nombreSinExtension,
+      url: url,
+      extension: extension,
+      tamaño: archivo.getSize(),
+      fecha: archivo.getDateCreated()
+    });
+  }
+  
+  // Procesar subcarpetas recursivamente
+  while (subcarpetas.hasNext()) {
+    var subcarpeta = subcarpetas.next();
+    recorrerCarpetaRecursivamente(subcarpeta, rutaCompleta, catalogo);
+  }
+}
+
+// ============================================================
+// MOSTRAR ESTRUCTURA DE CARPETAS ENCONTRADA
+// ============================================================
+
+function mostrarEstructura(catalogo) {
+  var estructura = {};
+  
+  for (var i = 0; i < catalogo.length; i++) {
+    var item = catalogo[i];
+    var rutaPartes = item.ruta.split(' / ');
+    var carpetaPrincipal = rutaPartes[0] || "Raíz";
+    
+    if (!estructura[carpetaPrincipal]) {
+      estructura[carpetaPrincipal] = [];
+    }
+    estructura[carpetaPrincipal].push(item.nombre);
+  }
+  
+  console.log("📊 ESTRUCTURA DETECTADA:");
+  for (var carpeta in estructura) {
+    console.log(`  📁 ${carpeta}: ${estructura[carpeta].length} imágenes`);
+  }
+}
+
+// ============================================================
+// ACTUALIZAR HOJA DE CÁLCULO
+// ============================================================
+
+function actualizarHojaCalculo(catalogo) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var hoja = ss.getSheetByName(SHEET_NAME);
+  
+  if (!hoja) {
+    hoja = ss.insertSheet(SHEET_NAME);
+  } else {
+    hoja.clear();
+  }
+  
+  // Cabeceras
+  var headers = ["RUTA", "NOMBRE", "URL", "TAMAÑO", "EXTENSION", "FECHA"];
+  hoja.getRange(1, 1, 1, headers.length).setValues([headers]);
+  hoja.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#4CAF50").setFontColor("#ffffff");
+  
+  // Datos
+  for (var i = 0; i < catalogo.length; i++) {
+    var fila = i + 2;
+    hoja.getRange(fila, 1).setValue(catalogo[i].ruta);
+    hoja.getRange(fila, 2).setValue("'" + catalogo[i].nombre); // Apóstrofe para conservar ceros
+    hoja.getRange(fila, 3).setValue(catalogo[i].url);
+    hoja.getRange(fila, 4).setValue(catalogo[i].tamaño);
+    hoja.getRange(fila, 5).setValue(catalogo[i].extension.toUpperCase());
+    hoja.getRange(fila, 6).setValue(catalogo[i].fecha);
+  }
+  
+  hoja.autoResizeColumns(1, 6);
+  
+  // Agregar filtros
+  var rango = hoja.getRange(1, 1, catalogo.length + 1, 6);
+  if (hoja.getFilter()) hoja.getFilter().remove();
+  rango.createFilter();
+}
+
+// ============================================================
+// CONVERTIR CATÁLOGO A TEXTO (para exportar)
+// ============================================================
+
+function convertirCatalogoATexto(catalogo) {
+  var texto = "📸 CATÁLOGO DE IMÁGENES\n";
+  texto += "📅 Generado: " + new Date().toISOString() + "\n";
+  texto += "📊 Total: " + catalogo.length + " imágenes\n\n";
+  
+  // Agrupar por carpeta
+  var porCarpeta = {};
+  for (var i = 0; i < catalogo.length; i++) {
+    var item = catalogo[i];
+    if (!porCarpeta[item.ruta]) {
+      porCarpeta[item.ruta] = [];
+    }
+    porCarpeta[item.ruta].push(item);
+  }
+  
+  for (var carpeta in porCarpeta) {
+    texto += `\n### 📁 ${carpeta}\n`;
+    for (var j = 0; j < porCarpeta[carpeta].length; j++) {
+      var img = porCarpeta[carpeta][j];
+      texto += `${img.nombre}: ${img.url}\n`;
+    }
+  }
+  
+  return texto;
+}
+
+// ============================================================
+// GENERAR TEXTO PARA PROMPT DE BOT
+// ============================================================
+
+function generarPromptParaBot() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var hoja = ss.getSheetByName(SHEET_NAME);
+  
+  if (!hoja) {
+    console.log("⚠️ Primero ejecutá procesarTodasLasImagenes()");
+    return;
+  }
+  
+  var datos = hoja.getDataRange().getValues();
+  var promptText = "📸 IMÁGENES DISPONIBLES\n📅 Actualización: " + new Date().toISOString() + "\n\n";
+  var carpetaActual = "";
+  
+  for (var i = 1; i < datos.length; i++) {
+    var ruta = datos[i][0];
+    var nombre = datos[i][1];
+    var url = datos[i][2];
+    
+    nombre = nombre.replace(/^'/, "");
+    
+    if (ruta !== carpetaActual) {
+      carpetaActual = ruta;
+      promptText += `\n### ${carpetaActual}\n`;
+    }
+    
+    promptText += `${nombre}: ${url}\n`;
+  }
+  
+  // Crear documento con el prompt
+  var doc = DocumentApp.create("Prompt_Imagenes_Bot_" + new Date().toISOString().slice(0, 19).replace(/:/g, '-'));
+  doc.getBody().setText(promptText);
+  doc.saveAndClose();
+  
+  console.log("📄 Prompt generado: " + doc.getUrl());
+  
+  return promptText;
+}
+
+// ============================================================
+// WEBHOOK OPCIONAL - Personalizar según necesidad
+// ============================================================
+
+/**
+ * Ejemplo de envío a webhook externo
+ * Descomentar y personalizar según necesidad
+ */
+/*
+function enviarAWebhook(textoCatalogo) {
+  var WEBHOOK_URL = "https://tu-webhook.com/endpoint";
+  
+  var payload = {
+    source: "Google Drive Image URL Generator",
+    author: "MatiasRodriguez4",
+    timestamp: new Date().toISOString(),
+    total_imagenes: textoCatalogo.split('\n').length,
+    content: textoCatalogo
+  };
+  
+  var options = {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+  
+  try {
+    var response = UrlFetchApp.fetch(WEBHOOK_URL, options);
+    console.log("✅ Enviado a webhook: " + response.getResponseCode());
+  } catch (error) {
+    console.error("❌ Error enviando a webhook: " + error.message);
+  }
+}
+*/
+
+// ============================================================
+// CONFIGURAR TRIGGERS AUTOMÁTICOS
+// ============================================================
+
+function configurarTriggers() {
+  // Limpiar triggers existentes
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'procesarTodasLasImagenes') {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  
+  if (INTERVALO_HORAS > 0) {
+    ScriptApp.newTrigger('procesarTodasLasImagenes')
+        .timeBased()
+        .everyHours(INTERVALO_HORAS)
+        .create();
+    console.log(`✅ Trigger configurado cada ${INTERVALO_HORAS} horas`);
+  } else {
+    console.log("⚠️ Triggers desactivados (INTERVALO_HORAS = 0)");
+  }
+}
+
+// ============================================================
+// FUNCIONES MANUALES Y MENÚ
+// ============================================================
+
+function ejecutarManual() {
+  procesarTodasLasImagenes();
+}
+
+function generarPrompt() {
+  generarPromptParaBot();
+}
+
+function mostrarAyuda() {
+  var ui = SpreadsheetApp.getUi();
+  ui.alert('📸 IMAGE URL GENERATOR\n\n' +
+    'Creado por: Matias Rodriguez (@MatiasRodriguez4)\n\n' +
+    'Instrucciones:\n' +
+    '1. Configurar ID_CARPETA_IMAGENES en el código\n' +
+    '2. Ejecutar "procesarTodasLasImagenes()"\n' +
+    '3. Para automatizar, ejecutar "configurarTriggers()"\n' +
+    '4. Para generar prompt de bot, ejecutar "generarPromptParaBot()"\n\n' +
+    'Formatos soportados: JPG, PNG, WEBP, GIF, BMP, SVG\n' +
+    'Tamaños disponibles: s500, s1000, s1600, s2200');
+}
+
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu('📸 Image URL Generator')
+    .addItem('🔄 Procesar todas las imágenes', 'ejecutarManual')
+    .addItem('📝 Generar prompt para bot', 'generarPrompt')
+    .addSeparator()
+    .addItem('⚙️ Configurar triggers', 'configurarTriggers')
+    .addSeparator()
+    .addItem('❓ Ayuda', 'mostrarAyuda')
+    .addToUi();
+}
+
+// ============================================================
+// TEST UNITARIO
+// ============================================================
+
+function test() {
+  console.log("🧪 Ejecutando test...");
+  console.log(`📁 Carpeta configurada: ${ID_CARPETA_IMAGENES}`);
+  console.log(`📐 Tamaño de imagen: ${TAMANIO_IMG}`);
+  console.log(`⏱️ Intervalo: ${INTERVALO_HORAS} horas`);
+  console.log(`🎨 Formatos permitidos: ${EXTENSIONES_PERMITIDAS.join(", ")}`);
+  
+  // Verificar que la carpeta existe
+  try {
+    var carpeta = DriveApp.getFolderById(ID_CARPETA_IMAGENES);
+    console.log(`✅ Carpeta encontrada: ${carpeta.getName()}`);
+  } catch(e) {
+    console.error(`❌ Carpeta no encontrada: ${e.message}`);
+  }
+}
